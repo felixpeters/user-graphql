@@ -1,4 +1,4 @@
-# User GraphQL
+# User GraphQL API
 
 Experimenting with GraphQL in combination with Go, the binary from this app
 simply runs a GraphQL API which serves user objects.

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"time"
@@ -16,6 +17,7 @@ type User struct {
 	Username string `json:"username"`
 }
 
+// UserList is list of users
 var UserList []User
 var letterRunes = []rune("abcdefghijklmnopqrstuvwxyz")
 
@@ -28,6 +30,7 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
+// RandStringRunes creates random string
 func RandStringRunes(n int) string {
 	b := make([]rune, n)
 	for i := range b {
@@ -95,9 +98,9 @@ var rootMutation = graphql.NewObject(graphql.ObjectConfig{
 			},
 			Resolve: func(params graphql.ResolveParams) (interface{}, error) {
 				username, _ := params.Args["username"].(string)
-				newId := RandStringRunes(8)
+				newID := RandStringRunes(8)
 				newUser := User{
-					ID:       newId,
+					ID:       newID,
 					Username: username,
 				}
 				UserList = append(UserList, newUser)
@@ -150,16 +153,48 @@ func executeQuery(query string, schema graphql.Schema) *graphql.Result {
 	return result
 }
 
-func main() {
-	http.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
-		result := executeQuery(r.URL.Query()["query"][0], schema)
-		json.NewEncoder(w).Encode(result)
+type q struct {
+	Query         string `json:"query"`
+	OperationName string `json:"operationName"`
+}
+
+func setHTTPHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("HTTP headers set")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		next.ServeHTTP(w, r)
 	})
+}
+
+func main() {
+	gql := func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "GET":
+			w.Header().Set("Content-Type", "application/json")
+			result := executeQuery(r.URL.Query()["query"][0], schema)
+			json.NewEncoder(w).Encode(result)
+		case "POST":
+			w.Header().Set("Content-Type", "application/json")
+			q := q{}
+			body, _ := ioutil.ReadAll(r.Body)
+			json.Unmarshal(body, &q)
+			result := executeQuery(q.Query, schema)
+			json.NewEncoder(w).Encode(result)
+		case "OPTIONS":
+		default:
+			fmt.Fprintf(w, "Invalid request method")
+
+		}
+	}
 	fmt.Println("Server is running on port 8080")
 	fmt.Println("Get single user: curl -g 'http://localhost:8080/graphql?query={user(id:\"b\"){id,username}}'")
 	fmt.Println("Create new user: curl -g 'http://localhost:8080/graphql?query=mutation+_{createUser(text:\"My+new+user\"){id,username}}'")
 	fmt.Println("Update user: curl -g 'http://localhost:8080/graphql?query=mutation+_{updateUser(id:\"a\",username:\"Hans\"){id,username}}'")
 	fmt.Println("Load user list: curl -g 'http://localhost:8080/graphql?query={userList{id,username}}'")
 
+	graphQLHandler := http.HandlerFunc(gql)
+	http.Handle("/graphql", setHTTPHeaders(graphQLHandler))
 	http.ListenAndServe(":8080", nil)
 }
